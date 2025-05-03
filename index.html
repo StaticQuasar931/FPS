@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>3D Room Game (Google Sites Safe)</title>
+  <style>
+    body { margin: 0; overflow: hidden; }
+    canvas { display: block; }
+    #instructions {
+      position: absolute;
+      top: 0; width: 100%;
+      text-align: center;
+      color: #ffffff;
+      font-family: Arial, sans-serif;
+      font-size: 20px;
+      padding: 10px;
+      background-color: rgba(0,0,0,0.6);
+      z-index: 100;
+    }
+    #gameOver {
+      position: absolute;
+      top: 50%; left: 50%;
+      transform: translate(-50%, -50%);
+      text-align: center;
+      color: #ff0000;
+      font-family: Arial, sans-serif;
+      font-size: 40px;
+      display: none;
+      z-index: 200;
+    }
+  </style>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.118.3/build/three.min.js"></script>
+</head>
+<body>
+<div id="instructions">Use WASD to move, Click to shoot</div>
+<div id="gameOver">
+  GAME OVER<br>
+  You destroyed <span id="score">0</span> enemies.<br>
+  <button onclick="location.reload()">Restart</button>
+</div>
+<script>
+let camera, scene, renderer;
+let bullets = [], enemies = [];
+let moveForward = false, moveBackward = false, moveLeft = false, moveRight = false;
+let velocity = new THREE.Vector3();
+let direction = new THREE.Vector3();
+let isGameOver = false, score = 0;
+
+init();
+animate();
+
+function init() {
+  scene = new THREE.Scene();
+  scene.background = new THREE.Color(0xaaaaaa);
+  camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 1, 1000);
+  camera.position.set(0, 10, 0);
+
+  renderer = new THREE.WebGLRenderer({ antialias: true });
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  document.body.appendChild(renderer.domElement);
+
+  const floor = new THREE.Mesh(
+    new THREE.PlaneGeometry(200, 200),
+    new THREE.MeshStandardMaterial({ color: 0x808080 })
+  );
+  floor.rotation.x = -Math.PI / 2;
+  scene.add(floor);
+
+  const light = new THREE.AmbientLight(0xffffff);
+  scene.add(light);
+
+  // Simple wall
+  const wall = new THREE.Mesh(
+    new THREE.BoxGeometry(200, 40, 2),
+    new THREE.MeshStandardMaterial({ color: 0x999999 })
+  );
+  wall.position.set(0, 20, -100);
+  scene.add(wall);
+
+  // Event listeners
+  document.addEventListener('keydown', e => {
+    if (e.key === 'w') moveForward = true;
+    if (e.key === 's') moveBackward = true;
+    if (e.key === 'a') moveLeft = true;
+    if (e.key === 'd') moveRight = true;
+  });
+
+  document.addEventListener('keyup', e => {
+    if (e.key === 'w') moveForward = false;
+    if (e.key === 's') moveBackward = false;
+    if (e.key === 'a') moveLeft = false;
+    if (e.key === 'd') moveRight = false;
+  });
+
+  document.addEventListener('click', shoot);
+}
+
+function shoot() {
+  if (isGameOver) return;
+  const bullet = new THREE.Mesh(
+    new THREE.SphereGeometry(0.5, 8, 8),
+    new THREE.MeshBasicMaterial({ color: 0xffff00 })
+  );
+  bullet.position.copy(camera.position);
+  const dir = new THREE.Vector3();
+  camera.getWorldDirection(dir);
+  bullet.userData.velocity = dir.multiplyScalar(50);
+  scene.add(bullet);
+  bullets.push(bullet);
+}
+
+function animate() {
+  requestAnimationFrame(animate);
+
+  const delta = 0.01;
+  direction.z = Number(moveForward) - Number(moveBackward);
+  direction.x = Number(moveRight) - Number(moveLeft);
+  direction.normalize();
+
+  camera.position.x += direction.x * 10 * delta;
+  camera.position.z += direction.z * 10 * delta;
+
+  bullets.forEach((b, i) => {
+    b.position.add(b.userData.velocity.clone().multiplyScalar(delta));
+    if (b.position.length() > 200) {
+      scene.remove(b);
+      bullets.splice(i, 1);
+    }
+  });
+
+  renderer.render(scene, camera);
+}
+</script>
+</body>
+</html>
