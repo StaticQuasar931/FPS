@@ -2,19 +2,19 @@
 <html>
 <head>
   <meta charset="utf-8">
-  <title>3D Room Game (Google Sites Safe)</title>
+  <title>3D Room Game with Enemies</title>
   <style>
     body { margin: 0; overflow: hidden; }
     canvas { display: block; }
     #instructions {
       position: absolute;
-      top: 0; width: 100%;
+      top: 0px; width: 100%;
       text-align: center;
       color: #ffffff;
       font-family: Arial, sans-serif;
-      font-size: 20px;
+      font-size: 24px;
       padding: 10px;
-      background-color: rgba(0,0,0,0.6);
+      background-color: rgba(0,0,0,0.5);
       z-index: 100;
     }
     #gameOver {
@@ -24,111 +24,774 @@
       text-align: center;
       color: #ff0000;
       font-family: Arial, sans-serif;
-      font-size: 40px;
+      font-size: 48px;
       display: none;
       z-index: 200;
     }
   </style>
+  <!-- Include Three.js library (non-module version) -->
   <script src="https://cdn.jsdelivr.net/npm/three@0.118.3/build/three.min.js"></script>
+  <!-- Include PointerLockControls (non-module version) -->
+  <script src="https://cdn.jsdelivr.net/npm/three@0.118.3/examples/js/controls/PointerLockControls.js"></script>
 </head>
 <body>
-<div id="instructions">Use WASD to move, Click to shoot</div>
+<div id="instructions">
+  Click to play
+</div>
 <div id="gameOver">
   GAME OVER<br>
   You destroyed <span id="score">0</span> enemies.<br>
   <button onclick="location.reload()">Restart</button>
 </div>
 <script>
-let camera, scene, renderer;
-let bullets = [], enemies = [];
-let moveForward = false, moveBackward = false, moveLeft = false, moveRight = false;
-let velocity = new THREE.Vector3();
-let direction = new THREE.Vector3();
-let isGameOver = false, score = 0;
+var camera, scene, renderer, controls;
+var objects = [];
+var bullets = [];
+var enemies = [];
+var clock = new THREE.Clock();
+
+var moveForward = false;
+var moveBackward = false;
+var moveLeft = false;
+var moveRight = false;
+var canJump = false;
+var isGameOver = false;
+var score = 0;
+
+var prevTime = performance.now();
+var velocity = new THREE.Vector3();
+var direction = new THREE.Vector3();
 
 init();
 animate();
 
 function init() {
+  // Create scene
   scene = new THREE.Scene();
-  scene.background = new THREE.Color(0xaaaaaa);
-  camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 1, 1000);
-  camera.position.set(0, 10, 0);
+  scene.background = new THREE.Color(0xcccccc);
+  scene.fog = new THREE.Fog(0xcccccc, 0, 500);
 
+  // Create camera
+  camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 1, 1000);
+
+  // Create renderer
   renderer = new THREE.WebGLRenderer({ antialias: true });
   renderer.setSize(window.innerWidth, window.innerHeight);
   document.body.appendChild(renderer.domElement);
 
-  const floor = new THREE.Mesh(
-    new THREE.PlaneGeometry(200, 200),
-    new THREE.MeshStandardMaterial({ color: 0x808080 })
-  );
+  // PointerLockControls
+  controls = new THREE.PointerLockControls(camera, document.body);
+
+  var instructions = document.getElementById('instructions');
+
+  instructions.addEventListener('click', function () {
+    controls.lock();
+  }, false);
+
+  controls.addEventListener('lock', function () {
+    instructions.style.display = 'none';
+  });
+
+  controls.addEventListener('unlock', function () {
+    instructions.style.display = '';
+  });
+
+  scene.add(controls.getObject());
+
+  // Increase player height
+  controls.getObject().position.y = 10; // Adjusted player height
+
+  // Floor
+  var floorGeometry = new THREE.PlaneGeometry(200, 200);
+  var floorMaterial = new THREE.MeshStandardMaterial({ color: 0x808080 });
+  var floor = new THREE.Mesh(floorGeometry, floorMaterial);
   floor.rotation.x = -Math.PI / 2;
   scene.add(floor);
 
-  const light = new THREE.AmbientLight(0xffffff);
-  scene.add(light);
+  // Add floor to collision objects
+  objects.push(floor);
 
-  // Simple wall
-  const wall = new THREE.Mesh(
-    new THREE.BoxGeometry(200, 40, 2),
-    new THREE.MeshStandardMaterial({ color: 0x999999 })
-  );
-  wall.position.set(0, 20, -100);
-  scene.add(wall);
+  // Environment
+  createEnvironment();
 
-  // Event listeners
-  document.addEventListener('keydown', e => {
-    if (e.key === 'w') moveForward = true;
-    if (e.key === 's') moveBackward = true;
-    if (e.key === 'a') moveLeft = true;
-    if (e.key === 'd') moveRight = true;
+  // Gun
+  createGun();
+
+  // Lighting
+  var ambientLight = new THREE.AmbientLight(0x404040);
+  scene.add(ambientLight);
+
+  var directionalLight = new THREE.DirectionalLight(0xffffff, 0.5);
+  directionalLight.position.set(0, 100, 0);
+  scene.add(directionalLight);
+
+  // Event Listeners
+  document.addEventListener('keydown', onKeyDown);
+  document.addEventListener('keyup', onKeyUp);
+  window.addEventListener('resize', onWindowResize, false);
+  document.addEventListener('click', onMouseClick, false);
+}
+
+function createEnvironment() {
+  // Walls
+  var wallMaterial = new THREE.MeshStandardMaterial({ color: 0xa0a0a0 });
+
+  // Back wall
+  var backWallGeometry = new THREE.PlaneGeometry(200, 40);
+  var backWall = new THREE.Mesh(backWallGeometry, wallMaterial);
+  backWall.position.set(0, 20, -100);
+  scene.add(backWall);
+  objects.push(backWall);
+
+  // Front wall
+  var frontWallGeometry = new THREE.PlaneGeometry(200, 40);
+  var frontWall = new THREE.Mesh(frontWallGeometry, wallMaterial);
+  frontWall.position.set(0, 20, 100);
+  frontWall.rotation.y = Math.PI;
+  scene.add(frontWall);
+  objects.push(frontWall);
+
+  // Left wall
+  var leftWallGeometry = new THREE.PlaneGeometry(200, 40);
+  var leftWall = new THREE.Mesh(leftWallGeometry, wallMaterial);
+  leftWall.position.set(-100, 20, 0);
+  leftWall.rotation.y = Math.PI / 2;
+  scene.add(leftWall);
+  objects.push(leftWall);
+
+  // Right wall
+  var rightWallGeometry = new THREE.PlaneGeometry(200, 40);
+  var rightWall = new THREE.Mesh(rightWallGeometry, wallMaterial);
+  rightWall.position.set(100, 20, 0);
+  rightWall.rotation.y = -Math.PI / 2;
+  scene.add(rightWall);
+  objects.push(rightWall);
+
+  // Ceiling
+  var ceilingGeometry = new THREE.PlaneGeometry(200, 200);
+  var ceilingMaterial = new THREE.MeshStandardMaterial({ color: 0x999999 });
+  var ceiling = new THREE.Mesh(ceilingGeometry, ceilingMaterial);
+  ceiling.rotation.x = Math.PI / 2;
+  ceiling.position.set(0, 40, 0);
+  scene.add(ceiling);
+  objects.push(ceiling);
+
+  // Doors and Windows
+  createDoorsAndWindows();
+
+  // Furniture
+  createFurniture();
+}
+
+function createDoorsAndWindows() {
+  // Door Material
+  var doorMaterial = new THREE.MeshStandardMaterial({ color: 0x654321 });
+
+  // Front Door
+  var doorGeometry = new THREE.BoxGeometry(8, 16, 1);
+  var door = new THREE.Mesh(doorGeometry, doorMaterial);
+  door.position.set(0, 8, 100);
+  scene.add(door);
+  objects.push(door);
+
+  // Back Door
+  var backDoor = door.clone();
+  backDoor.position.set(-80, 8, -100);
+  scene.add(backDoor);
+  objects.push(backDoor);
+
+  // Window Material
+  var windowMaterial = new THREE.MeshStandardMaterial({ color: 0x87ceeb, transparent: true, opacity: 0.5 });
+
+  // Left Windows
+  for (var i = -60; i <= 60; i += 40) {
+    var windowGeometry = new THREE.BoxGeometry(20, 12, 1);
+    var window = new THREE.Mesh(windowGeometry, windowMaterial);
+    window.position.set(-100, 20, i);
+    window.rotation.y = Math.PI / 2;
+    scene.add(window);
+    objects.push(window);
+  }
+
+  // Right Windows
+  for (var i = -60; i <= 60; i += 40) {
+    var windowGeometry = new THREE.BoxGeometry(20, 12, 1);
+    var window = new THREE.Mesh(windowGeometry, windowMaterial);
+    window.position.set(100, 20, i);
+    window.rotation.y = -Math.PI / 2;
+    scene.add(window);
+    objects.push(window);
+  }
+}
+
+function createFurniture() {
+  // Dining Area
+  createDiningArea();
+
+  // Living Room
+  createLivingRoom();
+
+  // Kitchen
+  createKitchen();
+
+  // Bedroom
+  createBedroom();
+
+  // Additional Decorations
+  createDecorations();
+}
+
+function createDiningArea() {
+  // Table
+  var tableTopGeometry = new THREE.BoxGeometry(20, 1, 10);
+  var tableTopMaterial = new THREE.MeshStandardMaterial({ color: 0x8b4513 });
+  var tableTop = new THREE.Mesh(tableTopGeometry, tableTopMaterial);
+  tableTop.position.set(-60, 11, -30);
+  scene.add(tableTop);
+  objects.push(tableTop);
+
+  // Table legs
+  var legGeometry = new THREE.BoxGeometry(1, 10, 1);
+  var legMaterial = new THREE.MeshStandardMaterial({ color: 0x8b4513 });
+
+  var positions = [
+    [-69.5, 5.5, -34.5],
+    [-50.5, 5.5, -34.5],
+    [-69.5, 5.5, -25.5],
+    [-50.5, 5.5, -25.5]
+  ];
+
+  positions.forEach(function (pos) {
+    var leg = new THREE.Mesh(legGeometry, legMaterial);
+    leg.position.set(pos[0], pos[1], pos[2]);
+    scene.add(leg);
+    objects.push(leg);
   });
 
-  document.addEventListener('keyup', e => {
-    if (e.key === 'w') moveForward = false;
-    if (e.key === 's') moveBackward = false;
-    if (e.key === 'a') moveLeft = false;
-    if (e.key === 'd') moveRight = false;
+  // Chairs around the table
+  createChair(-60, 0, -42, 0);
+  createChair(-70, 0, -30, Math.PI / 2);
+  createChair(-60, 0, -18, Math.PI);
+  createChair(-50, 0, -30, -Math.PI / 2);
+}
+
+function createLivingRoom() {
+  // Sofa
+  createSofa(60, 0, -30, -Math.PI / 2);
+
+  // Coffee Table
+  var coffeeTableGeometry = new THREE.BoxGeometry(10, 1, 6);
+  var coffeeTableMaterial = new THREE.MeshStandardMaterial({ color: 0x8b4513 });
+  var coffeeTable = new THREE.Mesh(coffeeTableGeometry, coffeeTableMaterial);
+  coffeeTable.position.set(60, 6, -20);
+  scene.add(coffeeTable);
+  objects.push(coffeeTable);
+
+  // TV Stand
+  var tvStandGeometry = new THREE.BoxGeometry(16, 2, 4);
+  var tvStandMaterial = new THREE.MeshStandardMaterial({ color: 0x3b3b3b });
+  var tvStand = new THREE.Mesh(tvStandGeometry, tvStandMaterial);
+  tvStand.position.set(60, 2, -10);
+  scene.add(tvStand);
+  objects.push(tvStand);
+
+  // TV
+  var tvGeometry = new THREE.BoxGeometry(12, 8, 1);
+  var tvMaterial = new THREE.MeshStandardMaterial({ color: 0x000000 });
+  var tv = new THREE.Mesh(tvGeometry, tvMaterial);
+  tv.position.set(60, 8, -10.5);
+  scene.add(tv);
+  objects.push(tv);
+}
+
+function createKitchen() {
+  // Kitchen Counter
+  var counterGeometry = new THREE.BoxGeometry(40, 10, 10);
+  var counterMaterial = new THREE.MeshStandardMaterial({ color: 0xaaaaaa });
+  var counter = new THREE.Mesh(counterGeometry, counterMaterial);
+  counter.position.set(-60, 5, 50);
+  scene.add(counter);
+  objects.push(counter);
+
+  // Fridge
+  var fridgeGeometry = new THREE.BoxGeometry(10, 20, 10);
+  var fridgeMaterial = new THREE.MeshStandardMaterial({ color: 0xffffff });
+  var fridge = new THREE.Mesh(fridgeGeometry, fridgeMaterial);
+  fridge.position.set(-80, 10, 70);
+  scene.add(fridge);
+  objects.push(fridge);
+}
+
+function createBedroom() {
+  // Bed
+  var bedGeometry = new THREE.BoxGeometry(20, 5, 30);
+  var bedMaterial = new THREE.MeshStandardMaterial({ color: 0x654321 });
+  var bed = new THREE.Mesh(bedGeometry, bedMaterial);
+  bed.position.set(60, 2.5, 60);
+  scene.add(bed);
+  objects.push(bed);
+
+  // Pillow
+  var pillowGeometry = new THREE.BoxGeometry(18, 2, 8);
+  var pillowMaterial = new THREE.MeshStandardMaterial({ color: 0xffffff });
+  var pillow = new THREE.Mesh(pillowGeometry, pillowMaterial);
+  pillow.position.set(60, 5, 74);
+  scene.add(pillow);
+  objects.push(pillow);
+
+  // Wardrobe
+  var wardrobeGeometry = new THREE.BoxGeometry(10, 20, 5);
+  var wardrobeMaterial = new THREE.MeshStandardMaterial({ color: 0x8b4513 });
+  var wardrobe = new THREE.Mesh(wardrobeGeometry, wardrobeMaterial);
+  wardrobe.position.set(80, 10, 50);
+  scene.add(wardrobe);
+  objects.push(wardrobe);
+}
+
+function createDecorations() {
+  // Lamp
+  createLamp(-30, 0, 30);
+
+  // Bookshelf
+  createBookshelf(-80, 0, -70);
+
+  // Table Lamp
+  createTableLamp(60, 11, 55);
+}
+
+function createChair(x, y, z, rotationY) {
+  var chairMaterial = new THREE.MeshStandardMaterial({ color: 0x006400 });
+  var chair = new THREE.Group();
+
+  // Seat
+  var seatGeometry = new THREE.BoxGeometry(4, 1, 4);
+  var seat = new THREE.Mesh(seatGeometry, chairMaterial);
+  seat.position.set(0, 2, 0);
+  chair.add(seat);
+
+  // Backrest
+  var backrestGeometry = new THREE.BoxGeometry(4, 6, 1);
+  var backrest = new THREE.Mesh(backrestGeometry, chairMaterial);
+  backrest.position.set(0, 5, -1.5);
+  chair.add(backrest);
+
+  // Chair legs
+  var legGeometry = new THREE.BoxGeometry(0.5, 2, 0.5);
+  var positions = [
+    [-1.5, 1, -1.5],
+    [1.5, 1, -1.5],
+    [-1.5, 1, 1.5],
+    [1.5, 1, 1.5]
+  ];
+
+  positions.forEach(function (pos) {
+    var leg = new THREE.Mesh(legGeometry, chairMaterial);
+    leg.position.set(pos[0], 0.5, pos[2]);
+    chair.add(leg);
   });
 
-  document.addEventListener('click', shoot);
+  chair.position.set(x, y, z);
+  chair.rotation.y = rotationY;
+  scene.add(chair);
+  objects.push(chair);
+}
+
+function createSofa(x, y, z, rotationY) {
+  var sofaMaterial = new THREE.MeshStandardMaterial({ color: 0x800000 });
+  var sofa = new THREE.Group();
+
+  // Base
+  var baseGeometry = new THREE.BoxGeometry(20, 2, 8);
+  var base = new THREE.Mesh(baseGeometry, sofaMaterial);
+  base.position.set(0, 3, 0);
+  sofa.add(base);
+
+  // Backrest
+  var backGeometry = new THREE.BoxGeometry(20, 6, 2);
+  var back = new THREE.Mesh(backGeometry, sofaMaterial);
+  back.position.set(0, 7, -3);
+  sofa.add(back);
+
+  // Armrests
+  var armGeometry = new THREE.BoxGeometry(2, 6, 8);
+  var leftArm = new THREE.Mesh(armGeometry, sofaMaterial);
+  leftArm.position.set(-9, 7, 0);
+  sofa.add(leftArm);
+
+  var rightArm = leftArm.clone();
+  rightArm.position.set(9, 7, 0);
+  sofa.add(rightArm);
+
+  sofa.position.set(x, y, z);
+  sofa.rotation.y = rotationY;
+  scene.add(sofa);
+  objects.push(sofa);
+}
+
+function createBookshelf(x, y, z) {
+  var shelfMaterial = new THREE.MeshStandardMaterial({ color: 0x8b4513 });
+  var shelf = new THREE.Group();
+
+  // Frame
+  var frameGeometry = new THREE.BoxGeometry(2, 30, 16);
+  var leftSide = new THREE.Mesh(frameGeometry, shelfMaterial);
+  leftSide.position.set(-9, 15, 0);
+  shelf.add(leftSide);
+
+  var rightSide = leftSide.clone();
+  rightSide.position.set(9, 15, 0);
+  shelf.add(rightSide);
+
+  var top = new THREE.Mesh(new THREE.BoxGeometry(20, 2, 16), shelfMaterial);
+  top.position.set(0, 30, 0);
+  shelf.add(top);
+
+  var bottom = top.clone();
+  bottom.position.set(0, 0, 0);
+  shelf.add(bottom);
+
+  // Shelves
+  for (var i = 6; i <= 24; i += 6) {
+    var shelfBoard = new THREE.Mesh(new THREE.BoxGeometry(20, 1, 16), shelfMaterial);
+    shelfBoard.position.set(0, i, 0);
+    shelf.add(shelfBoard);
+  }
+
+  shelf.position.set(x, y, z);
+  scene.add(shelf);
+  objects.push(shelf);
+}
+
+function createLamp(x, y, z) {
+  var lampMaterial = new THREE.MeshStandardMaterial({ color: 0xffff00 });
+  var lampBaseGeometry = new THREE.CylinderGeometry(1, 1, 2, 32);
+  var lampBase = new THREE.Mesh(lampBaseGeometry, lampMaterial);
+  lampBase.position.set(x, 1, z);
+  scene.add(lampBase);
+  objects.push(lampBase);
+
+  var lampPoleGeometry = new THREE.CylinderGeometry(0.5, 0.5, 16, 32);
+  var lampPole = new THREE.Mesh(lampPoleGeometry, lampMaterial);
+  lampPole.position.set(x, 9, z);
+  scene.add(lampPole);
+  objects.push(lampPole);
+
+  var lampShadeGeometry = new THREE.ConeGeometry(2, 4, 32);
+  var lampShade = new THREE.Mesh(lampShadeGeometry, lampMaterial);
+  lampShade.position.set(x, 17, z);
+  scene.add(lampShade);
+  objects.push(lampShade);
+}
+
+function createTableLamp(x, y, z) {
+  var lampMaterial = new THREE.MeshStandardMaterial({ color: 0xffff00 });
+  var lampBaseGeometry = new THREE.CylinderGeometry(0.5, 0.5, 1, 32);
+  var lampBase = new THREE.Mesh(lampBaseGeometry, lampMaterial);
+  lampBase.position.set(x, y + 0.5, z);
+  scene.add(lampBase);
+  objects.push(lampBase);
+
+  var lampPoleGeometry = new THREE.CylinderGeometry(0.2, 0.2, 3, 32);
+  var lampPole = new THREE.Mesh(lampPoleGeometry, lampMaterial);
+  lampPole.position.set(x, y + 2, z);
+  scene.add(lampPole);
+  objects.push(lampPole);
+
+  var lampShadeGeometry = new THREE.ConeGeometry(1, 2, 32);
+  var lampShade = new THREE.Mesh(lampShadeGeometry, lampMaterial);
+  lampShade.position.set(x, y + 4, z);
+  scene.add(lampShade);
+  objects.push(lampShade);
+}
+
+function createGun() {
+  var gunGeometry = new THREE.BoxGeometry(1, 1, 2);
+  var gunMaterial = new THREE.MeshStandardMaterial({ color: 0x333333 });
+  var gun = new THREE.Mesh(gunGeometry, gunMaterial);
+
+  // Position the gun in front of the camera
+  gun.position.set(0.5, -1, -2);
+
+  // Add the gun to the camera so it moves with it
+  camera.add(gun);
+}
+
+function onKeyDown(event) {
+  switch (event.code) {
+    case 'ArrowUp':
+    case 'KeyW':
+      moveForward = true;
+      break;
+
+    case 'ArrowLeft':
+    case 'KeyA':
+      moveLeft = true;
+      break;
+
+    case 'ArrowDown':
+    case 'KeyS':
+      moveBackward = true;
+      break;
+
+    case 'ArrowRight':
+    case 'KeyD':
+      moveRight = true;
+      break;
+
+    case 'Space':
+      if (canJump === true) velocity.y += 150; // Adjusted jump strength
+      canJump = false;
+      break;
+  }
+}
+
+function onKeyUp(event) {
+  switch (event.code) {
+    case 'ArrowUp':
+    case 'KeyW':
+      moveForward = false;
+      break;
+
+    case 'ArrowLeft':
+    case 'KeyA':
+      moveLeft = false;
+      break;
+
+    case 'ArrowDown':
+    case 'KeyS':
+      moveBackward = false;
+      break;
+
+    case 'ArrowRight':
+    case 'KeyD':
+      moveRight = false;
+      break;
+  }
+}
+
+function onMouseClick(event) {
+  if (controls.isLocked === true && !isGameOver) {
+    shoot();
+  }
 }
 
 function shoot() {
-  if (isGameOver) return;
-  const bullet = new THREE.Mesh(
-    new THREE.SphereGeometry(0.5, 8, 8),
-    new THREE.MeshBasicMaterial({ color: 0xffff00 })
-  );
-  bullet.position.copy(camera.position);
-  const dir = new THREE.Vector3();
-  camera.getWorldDirection(dir);
-  bullet.userData.velocity = dir.multiplyScalar(50);
+  var bulletGeometry = new THREE.SphereGeometry(0.5, 8, 8);
+  var bulletMaterial = new THREE.MeshBasicMaterial({ color: 0xffff00 });
+  var bullet = new THREE.Mesh(bulletGeometry, bulletMaterial);
+
+  // Set the bullet position to the camera position
+  bullet.position.copy(controls.getObject().position);
+  bullet.position.y -= 1; // Adjust to gun level
+
+  // Calculate the bullet direction based on the camera's direction
+  var bulletDirection = new THREE.Vector3();
+  camera.getWorldDirection(bulletDirection);
+
+  bullet.userData.velocity = bulletDirection.multiplyScalar(500);
+  bullet.userData.owner = 'player';
+
   scene.add(bullet);
   bullets.push(bullet);
+}
+
+function onWindowResize() {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+
+  renderer.setSize(window.innerWidth, window.innerHeight);
 }
 
 function animate() {
   requestAnimationFrame(animate);
 
-  const delta = 0.01;
-  direction.z = Number(moveForward) - Number(moveBackward);
-  direction.x = Number(moveRight) - Number(moveLeft);
-  direction.normalize();
+  var time = performance.now();
+  var delta = (time - prevTime) / 1000;
 
-  camera.position.x += direction.x * 10 * delta;
-  camera.position.z += direction.z * 10 * delta;
+  if (controls.isLocked === true && !isGameOver) {
+    // Movement
+    velocity.x -= velocity.x * 10.0 * delta;
+    velocity.z -= velocity.z * 10.0 * delta;
+    velocity.y -= 9.8 * 100.0 * delta; // gravity
 
-  bullets.forEach((b, i) => {
-    b.position.add(b.userData.velocity.clone().multiplyScalar(delta));
-    if (b.position.length() > 200) {
-      scene.remove(b);
-      bullets.splice(i, 1);
+    direction.z = Number(moveForward) - Number(moveBackward);
+    direction.x = Number(moveRight) - Number(moveLeft);
+    direction.normalize(); // ensures consistent movements in all directions
+
+    var speed = 400.0;
+
+    if (moveForward || moveBackward) {
+      velocity.z -= direction.z * speed * delta;
     }
-  });
+    if (moveLeft || moveRight) {
+      velocity.x -= direction.x * speed * delta;
+    }
+
+    controls.moveRight(-velocity.x * delta);
+    controls.moveForward(-velocity.z * delta);
+
+    controls.getObject().position.y += velocity.y * delta; // Apply gravity
+
+    // Prevent falling through the floor
+    if (controls.getObject().position.y < 10) {
+      velocity.y = 0;
+      controls.getObject().position.y = 10;
+      canJump = true;
+    }
+
+    // Update bullets
+    updateBullets(delta);
+
+    // Spawn enemies
+    if (enemies.length < 2) { // Reduced max enemies to 2
+      spawnEnemy();
+    }
+
+    // Update enemies
+    updateEnemies(delta);
+
+    // Check for game over
+    checkGameOver();
+
+    prevTime = time;
+  }
 
   renderer.render(scene, camera);
+}
+
+function updateBullets(delta) {
+  for (var i = bullets.length - 1; i >= 0; i--) {
+    var bullet = bullets[i];
+    bullet.position.add(bullet.userData.velocity.clone().multiplyScalar(delta));
+
+    // Check for collision with objects
+    var bulletBB = new THREE.Box3().setFromObject(bullet);
+
+    // Check collision with enemies
+    for (var j = enemies.length - 1; j >= 0; j--) {
+      var enemy = enemies[j];
+      var enemyBB = new THREE.Box3().setFromObject(enemy);
+
+      if (bulletBB.intersectsBox(enemyBB) && bullet.userData.owner === 'player') {
+        // Bullet hit enemy
+        enemy.userData.health -= 1;
+
+        // Remove bullet
+        scene.remove(bullet);
+        bullets.splice(i, 1);
+
+        if (enemy.userData.health <= 0) {
+          // Enemy is dead
+          scene.remove(enemy);
+          enemies.splice(j, 1);
+          score += 1; // Increment score
+        }
+        break;
+      }
+    }
+
+    // Remove bullet if it goes too far
+    if (bullet.position.length() > 1000) {
+      scene.remove(bullet);
+      bullets.splice(i, 1);
+    }
+  }
+}
+
+function spawnEnemy() {
+  var enemy = new THREE.Group();
+
+  // Create a more interesting enemy shape (e.g., a simple robot)
+  var bodyMaterial = new THREE.MeshStandardMaterial({ color: 0xff0000 });
+
+  // Body
+  var bodyGeometry = new THREE.BoxGeometry(4, 6, 2);
+  var body = new THREE.Mesh(bodyGeometry, bodyMaterial);
+  body.position.set(0, 5, 0);
+  enemy.add(body);
+
+  // Head
+  var headGeometry = new THREE.BoxGeometry(3, 3, 3);
+  var head = new THREE.Mesh(headGeometry, bodyMaterial);
+  head.position.set(0, 9, 0);
+  enemy.add(head);
+
+  // Left Arm
+  var armGeometry = new THREE.BoxGeometry(1, 5, 1);
+  var leftArm = new THREE.Mesh(armGeometry, bodyMaterial);
+  leftArm.position.set(-2.5, 5.5, 0);
+  enemy.add(leftArm);
+
+  // Right Arm
+  var rightArm = leftArm.clone();
+  rightArm.position.set(2.5, 5.5, 0);
+  enemy.add(rightArm);
+
+  // Left Leg
+  var legGeometry = new THREE.BoxGeometry(1.5, 5, 1.5);
+  var leftLeg = new THREE.Mesh(legGeometry, bodyMaterial);
+  leftLeg.position.set(-1, 2.5, 0);
+  enemy.add(leftLeg);
+
+  // Right Leg
+  var rightLeg = leftLeg.clone();
+  rightLeg.position.set(1, 2.5, 0);
+  enemy.add(rightLeg);
+
+  // Random spawn position near the edges of the room
+  var positions = [
+    { x: -90, z: -90 },
+    { x: 90, z: -90 },
+    { x: -90, z: 90 },
+    { x: 90, z: 90 }
+  ];
+  var pos = positions[Math.floor(Math.random() * positions.length)];
+  enemy.position.set(pos.x, 0, pos.z);
+
+  enemy.userData.health = 3;
+
+  scene.add(enemy);
+  enemies.push(enemy);
+}
+
+function updateEnemies(delta) {
+  for (var i = enemies.length - 1; i >= 0; i--) {
+    var enemy = enemies[i];
+
+    // Move toward the player
+    var directionToPlayer = controls.getObject().position.clone().sub(enemy.position);
+    directionToPlayer.y = 0; // Keep enemies on the ground
+    directionToPlayer.normalize();
+
+    enemy.position.add(directionToPlayer.multiplyScalar(25 * delta)); // Reduced speed by half
+
+    // Rotate enemy to face the player
+    var angle = Math.atan2(directionToPlayer.x, directionToPlayer.z);
+    enemy.rotation.y = angle;
+
+    // Check if enemy touches the player (gun position)
+    var enemyBB = new THREE.Box3().setFromObject(enemy);
+    var playerPosition = controls.getObject().position.clone();
+    playerPosition.y -= 1; // Adjust to gun level
+    var playerBB = new THREE.Box3().setFromCenterAndSize(playerPosition, new THREE.Vector3(1, 1, 1));
+
+    if (enemyBB.intersectsBox(playerBB)) {
+      // Game Over
+      isGameOver = true;
+      document.getElementById('gameOver').style.display = 'block';
+      document.getElementById('score').textContent = score;
+      controls.unlock();
+      break;
+    }
+  }
+}
+
+function checkGameOver() {
+  if (isGameOver) {
+    // Stop all movements
+    moveForward = moveBackward = moveLeft = moveRight = false;
+    velocity.set(0, 0, 0);
+  }
 }
 </script>
 </body>
